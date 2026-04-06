@@ -18,6 +18,7 @@ env:
   IMAGE_NAME: ubuntu-net-10
 
   DOCKERFILE: ./dockerfiles/ubuntu/10/dockerfile
+  
   DOCKER_BUILD_CONTEXT: ./dockerfiles/ubuntu/10
 
 jobs:

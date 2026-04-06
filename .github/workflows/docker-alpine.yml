@@ -18,6 +18,7 @@ env:
   IMAGE_NAME: alpine-net-10
 
   DOCKERFILE: ./dockerfiles/alpine/10/dockerfile
+  
   DOCKER_BUILD_CONTEXT: ./dockerfiles/alpine/10
 
 jobs:

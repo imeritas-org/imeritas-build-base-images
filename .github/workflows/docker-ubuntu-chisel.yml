@@ -1,4 +1,4 @@
-name: Docker-Ubuntu-chisel
+name: Docker-Ubuntu-chiseled
 
 # This workflow uses actions that are not certified by GitHub.
 # They are provided by a third-party and are governed by
@@ -15,10 +15,11 @@ env:
   REGISTRY: ghcr.io
 
   # Image path: ghcr.io/<repository_owner>/<IMAGE_NAME> (not the Git repo name)
-  IMAGE_NAME: ubuntu-chisel-net-10
+  IMAGE_NAME: ubuntu-chiseled-net-10
 
   DOCKERFILE: ./dockerfiles/ubuntu-chiseled/10/dockerfile
-  DOCKER_CONTEXT: ./dockerfiles/ubuntu-chiseled/10
+
+  DOCKER_BUILD_CONTEXT: ./dockerfiles/ubuntu-chiseled/10
 
 jobs:
   build:
@@ -94,7 +95,7 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v7
         with:
-          context: ${{ env.DOCKER_CONTEXT }}
+          context: ${{ env.DOCKER_BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE }}
           push: ${{ github.event_name != 'pull_request' }}
           # Explicit tags only — do not use meta.outputs.tags (can include digest-style tags)
