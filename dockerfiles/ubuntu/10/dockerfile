@@ -1,0 +1,82 @@
+# Imeritas .NET 10 ASP.NET production base (Ubuntu Noble)
+#
+# Starts from Microsoft's official ASP.NET 10 Ubuntu Noble image and aligns it with the
+# Alpine variant: production ASP.NET environment, ICU-based globalization (libicu74),
+# server GC and heap limit, curl, tzdata, CA certificates, and a non-root `imeritas`
+# user (UID/GID 7777) with home `/app`.
+#
+# Result: same operational contract as the Alpine base—8080/8443, `/app` for the runtime
+# user, `/app/.info/` snapshots (dotnet --info, os-release), and `/app/app-data`—on
+# glibc Ubuntu instead of musl Alpine.
+
+ARG SOURCE_IMAGE=mcr.microsoft.com/dotnet/aspnet:10.0-noble
+FROM ${SOURCE_IMAGE}
+
+ENV ASPNETCORE_ENVIRONMENT="Production"
+
+LABEL Imeritas.Maintainer="Imeritas, inc" \
+    Imeritas.BaseImage="ubuntu noble ${DOTNET_VERSION}" \
+    Imeritas.Disclaimer="Imeritas - Production Build"
+
+LABEL org.opencontainers.image.description="Imeritas base image for .NET build"
+LABEL org.opencontainers.image.licenses="MIT"
+
+EXPOSE 8080
+EXPOSE 8443
+
+# ASPNETCORE_URLS — Kestrel listens for HTTP on all interfaces, port 8080 (matches EXPOSE above).
+# DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false — use ICU for culture-aware APIs; requires libicu below.
+ENV ASPNETCORE_URLS=http://+:8080 \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
+# DOTNET_gcServer=1 — server GC (throughput-oriented on multi-core hosts; typical for ASP.NET in containers).
+# DOTNET_GCHeapHardLimit — maximum managed GC heap in bytes (~3 GiB here) to bound memory use in containers.
+ENV DOTNET_gcServer=1 \
+    DOTNET_GCHeapHardLimit=3221225472
+
+# adduser — `adduser`/`addgroup` used below to create the non-root `imeritas` account (Noble package).
+# curl — HTTP/HTTPS client (health checks, outbound calls, scripting inside the image).
+# libicu74 — ICU runtime for Ubuntu 24.04 Noble; pairs with DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false (Alpine: icu + icu-libs).
+# tzdata — IANA time zone database for `TimeZoneInfo` and local-time conversions.
+# ca-certificates — system CA bundle; `update-ca-certificates` refreshes trust for TLS (HTTPS, NuGet, APIs).
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        adduser \
+        curl \
+        libicu74 \
+        tzdata \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
+
+ENV USERGROUP="imeritas" \
+    GRUID="7777" \
+    USER="imeritas" \
+    UID="7777" \
+    USER_HOME="/app"
+
+RUN addgroup --gid ${GRUID} ${USERGROUP}
+
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "${USER_HOME}" \
+    --uid "${UID}" \
+    --ingroup ${USERGROUP} \
+    "${USER}"
+
+ARG INFO_DIR="${USER_HOME}/.info/"
+
+COPY --chown=imeritas:imeritas [".empty", "${INFO_DIR}"]
+
+RUN <<EOT
+  dotnet --info > ${INFO_DIR}dotnet.txt
+  cat /etc/os-release > ${INFO_DIR}linux.txt
+EOT
+
+# Data (writable app state; same path as Alpine and Ubuntu Chiseled bases)
+COPY --chown=imeritas:imeritas [".empty", "/app/app-data"]
+
+# always last step
+RUN chmod -R 755 /app

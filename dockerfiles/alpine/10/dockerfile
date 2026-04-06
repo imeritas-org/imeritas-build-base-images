@@ -1,0 +1,91 @@
+# Imeritas .NET 10 ASP.NET production base (Alpine)
+#
+# Starts from Microsoft's official ASP.NET 10 Alpine image and hardens it for Imeritas:
+# production ASP.NET settings (URLs, globalization with ICU, server GC and heap limit),
+# package updates plus curl, ICU, tzdata, and CA certificates, and a non-root `imeritas`
+# user (UID/GID 7777) with home `/app`.
+#
+# Result: an image ready to run .NET web apps on 8080/8443, with `/app` owned for the
+# app user, optional metadata under `/app/.info/` (dotnet --info and os-release), and
+# `/app/app-data` for application data (sibling of `.info` under `/app`).
+
+ARG SOURCE_IMAGE=mcr.microsoft.com/dotnet/aspnet:10.0-alpine
+FROM ${SOURCE_IMAGE}
+
+ENV ASPNETCORE_ENVIRONMENT="Production"
+
+LABEL Imeritas.Maintainer="Imeritas, inc" \
+    Imeritas.BaseImage="alpine ${DOTNET_VERSION}" \
+    Imeritas.Disclaimer="Imeritas - Production Build"
+
+LABEL org.opencontainers.image.description="Imeritas base image for .NET build"
+LABEL org.opencontainers.image.licenses="MIT"
+
+EXPOSE 8080
+EXPOSE 8443
+
+# ASPNETCORE_URLS — Kestrel listens for HTTP on all interfaces, port 8080 (matches EXPOSE above).
+# DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false — use ICU for culture-aware APIs; requires icu packages below.
+ENV ASPNETCORE_URLS=http://+:8080 \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
+# DOTNET_gcServer=1 — server GC (throughput-oriented on multi-core hosts; typical for ASP.NET in containers).
+# DOTNET_GCHeapHardLimit — maximum managed GC heap in bytes (~3 GiB here) to bound memory use in containers.
+ENV DOTNET_gcServer=1 \
+    DOTNET_GCHeapHardLimit=3221225472
+
+
+# download an updated package index from the repositories
+RUN apk update && apk upgrade --no-cache
+
+# curl — HTTP/HTTPS client (health checks, outbound calls, scripting inside the image).
+# icu — ICU data and tooling; pairs with icu-libs so .NET can use full globalization (see DOTNET_SYSTEM_GLOBALIZATION_INVARIANT).
+# icu-libs — ICU shared libraries loaded at runtime for culture-aware formatting, calendars, and collation.
+# tzdata — IANA time zone database so `TimeZoneInfo` and local-time conversions match real zones.
+RUN apk add curl
+RUN apk add icu
+RUN apk add icu-libs
+RUN apk add tzdata
+
+# update all packages as well as their dependencies.
+RUN apk --no-cache add ca-certificates \
+  && update-ca-certificates
+  
+RUN apk update && apk upgrade --no-cache
+
+
+ENV USERGROUP="imeritas" \
+    GRUID="7777" \
+    USER="imeritas" \
+    UID="7777" \
+    USER_HOME="/app"
+
+# creates a group: rpiapp with gid:777
+RUN addgroup --gid ${GRUID} ${USERGROUP}
+
+# create a user
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "${USER_HOME}" \
+    --uid "${UID}" \
+    --ingroup "${USERGROUP}" \
+    "${USER}"
+
+# create Info files
+ARG INFO_DIR="${USER_HOME}/.info/"
+
+# copy RPI development cert
+COPY --chown=imeritas:imeritas [".empty", "${INFO_DIR}"]
+
+RUN <<EOT
+  dotnet --info > ${INFO_DIR}dotnet.txt
+  cat /etc/os-release > ${INFO_DIR}linux.txt
+EOT
+
+# Data (writable app state; same path as Ubuntu and Ubuntu Chiseled bases)
+COPY --chown=imeritas:imeritas [".empty", "/app/app-data"]
+
+# always last step
+RUN chmod -R 755 /app
+
