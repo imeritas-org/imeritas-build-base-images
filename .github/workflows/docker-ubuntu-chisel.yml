@@ -21,6 +21,9 @@ env:
 
   DOCKER_BUILD_CONTEXT: ./dockerfiles/ubuntu-chiseled/10
 
+  # Base image for the Ubuntu Chiseled .NET Dockerfile (overrides Dockerfile ARG default when building in CI).
+  SOURCE_IMAGE: mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
+
 jobs:
   build:
 
@@ -97,6 +100,8 @@ jobs:
         with:
           context: ${{ env.DOCKER_BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE }}
+          build-args: |
+            SOURCE_IMAGE=${{ env.SOURCE_IMAGE }}
           push: ${{ github.event_name != 'pull_request' }}
           # Explicit tags only — do not use meta.outputs.tags (can include digest-style tags)
           tags: |
