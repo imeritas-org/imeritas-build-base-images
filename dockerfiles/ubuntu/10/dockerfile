@@ -21,6 +21,9 @@ LABEL Imeritas.Maintainer="Imeritas, inc" \
 LABEL org.opencontainers.image.description="Imeritas base image for .NET build"
 LABEL org.opencontainers.image.licenses="MIT"
 
+# Expose standard unprivileged container ports for web applications:
+# - 8080: Default port for HTTP traffic
+# - 8443: Default port for HTTPS traffic (if configured)
 EXPOSE 8080
 EXPOSE 8443
 
@@ -34,30 +37,35 @@ ENV ASPNETCORE_URLS=http://+:8080 \
 ENV DOTNET_gcServer=1 \
     DOTNET_GCHeapHardLimit=3221225472
 
-# adduser — `adduser`/`addgroup` used below to create the non-root `imeritas` account (Noble package).
-# curl — HTTP/HTTPS client (health checks, outbound calls, scripting inside the image).
-# libicu74 — ICU runtime for Ubuntu 24.04 Noble; pairs with DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false (Alpine: icu + icu-libs).
-# tzdata — IANA time zone database for `TimeZoneInfo` and local-time conversions.
-# ca-certificates — system CA bundle; `update-ca-certificates` refreshes trust for TLS (HTTPS, NuGet, APIs).
-RUN apt-get update \
-    && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends \
-        adduser \
-        curl \
-        libicu74 \
-        tzdata \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-ca-certificates
+# Update package index, upgrade system packages, and install dependencies
+# - adduser        : `adduser`/`addgroup` used below to create the non-root `imeritas` account (Noble package).
+# - curl           : HTTP/HTTPS client (health checks, outbound calls, scripting inside the image).
+# - libicu74       : ICU runtime for Ubuntu 24.04 Noble; pairs with DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false (Alpine: icu + icu-libs).
+# - tzdata         : IANA time zone database for `TimeZoneInfo` and local-time conversions.
+# - ca-certificates: system CA bundle; `update-ca-certificates` refreshes trust for TLS (HTTPS, NuGet, APIs).
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    adduser \
+    curl \
+    libicu74 \
+    tzdata \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates
 
+# Define environment variables for the non-root application user and group.
+# These ensure consistent IDs (7777) across the platform for permission matching and security.
 ENV USERGROUP="imeritas" \
     GRUID="7777" \
     USER="imeritas" \
     UID="7777" \
     USER_HOME="/app"
 
+# create a group: imeritas with gid:7777
 RUN addgroup --gid ${GRUID} ${USERGROUP}
 
+# Create the dedicated execution user without interactive login capabilities or passwords
 RUN adduser \
     --disabled-password \
     --gecos "" \
@@ -66,8 +74,10 @@ RUN adduser \
     --ingroup ${USERGROUP} \
     "${USER}"
 
+# create Info files directory path
 ARG INFO_DIR="${USER_HOME}/.info/"
 
+# create the empty .info directory (using .empty structure)
 COPY --chown=imeritas:imeritas [".empty", "${INFO_DIR}"]
 
 RUN <<EOT
@@ -78,5 +88,9 @@ EOT
 # Data (writable app state; same path as Alpine and Ubuntu Chiseled bases)
 COPY --chown=imeritas:imeritas [".empty", "/app/app-data"]
 
-# always last step
+# Ensure the application directory and all subdirectories are safely readable and executable,
+# enforcing proper access controls for the non-root application user.
 RUN chmod -R 755 /app
+
+# Set the default working directory for the runtime container
+WORKDIR /app
