@@ -176,7 +176,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
       --build-arg DOTNET_VERSION=10.0 \
       -t myapp:${{ github.ref_name }} .
     docker push myapp:${{ github.ref_name }}
-```text
+```
 
 ```dockerfile
 ARG DOTNET_VERSION=10.0
