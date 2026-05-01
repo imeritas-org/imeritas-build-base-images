@@ -18,7 +18,7 @@ LABEL Imeritas.Maintainer="Imeritas, inc" \
     Imeritas.BaseImage="alpine ${DOTNET_VERSION}" \
     Imeritas.Disclaimer="Imeritas - Production Build"
 
-LABEL org.opencontainers.image.description="Imeritas base image for .NET build"
+LABEL org.opencontainers.image.description="Imeritas Devops Base Image for .NET"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Expose standard unprivileged container ports for web applications:

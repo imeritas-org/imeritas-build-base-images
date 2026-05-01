@@ -105,7 +105,7 @@ COPY --from=chisel /rootfs /
 LABEL Imeritas.Maintainer="Imeritas, inc" \
     Imeritas.BaseImage="ubuntu noble chiseled" \
     Imeritas.Disclaimer="Imeritas - Production Build" \
-    org.opencontainers.image.description="Imeritas base image for .NET build (Ubuntu Chiseled + Chisel)" \
+    org.opencontainers.image.description="Imeritas Devops Base Image for .NET (Ubuntu Chiseled + Chisel)" \
     org.opencontainers.image.licenses="MIT"
 
 # Expose standard unprivileged container ports for web applications:

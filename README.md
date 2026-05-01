@@ -20,13 +20,14 @@ mcr.microsoft.com/dotnet/aspnet:10.0-alpine3.21
 ## Image Size Comparison (approx. .NET 10 ASP.NET runtime)
 
 | Image | Compressed | Uncompressed |
-|---|---|---|
+| --- | --- | --- |
 | `10.0-noble` (full Ubuntu) | ~90 MB | ~220 MB |
 | `10.0-noble-chiseled` | ~40 MB | ~105 MB |
 | `10.0-alpine` | ~45 MB | ~115 MB |
 | `10.0-alpine-composite` | ~38 MB | ~98 MB |
 
-> Chiseled Ubuntu and Alpine remain very close in size — size alone is not a strong differentiator.
+> Chiseled Ubuntu and Alpine remain very close in size.
+> Size alone is not a strong differentiator.
 
 ---
 
@@ -71,8 +72,9 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 ```
 
 ### ✅ Pros
+
 - **glibc** — full GNU C Library, maximum .NET native library compatibility
-- Standard `apt` tooling — easy to install dependencies (`libgdiplus`, `icu-libs`, etc.)
+- Standard `apt` tooling for dependencies (`libgdiplus`, `icu-libs`, etc.)
 - Best compatibility with NuGet packages that have native dependencies
 - `noble-chiseled` gives Ubuntu familiarity with near-Alpine size
 - Chiseled removes shell + package manager — improved security surface
@@ -83,6 +85,7 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 - Ubuntu 24.04 Noble LTS — long-term Canonical support until 2029
 
 ### ❌ Cons
+
 - Full `noble` image is significantly larger than Alpine
 - More packages = larger attack surface (full image)
 - Chiseled has no shell — harder to `docker exec` in for debugging
@@ -92,7 +95,8 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 
 ## Strategy 2 — Alpine Linux
 
-### ✅ Pros
+### Alpine Pros
+
 - Small image size — fast pulls, less registry storage
 - Minimal attack surface — fewer installed packages by default
 - `apk` package manager still available (unlike chiseled)
@@ -101,7 +105,8 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 - Cost savings at scale — less bandwidth, faster CI pipelines
 - Good for Kubernetes where pod startup speed matters
 
-### ❌ Cons
+### Alpine Cons
+
 - Uses **musl libc** instead of glibc — root cause of most Alpine .NET pain
 - Many NuGet packages with native components **don't support musl**
 - `SkiaSharp`, `libgdiplus` require extra work or fail silently
@@ -116,12 +121,12 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 ## Side-by-Side Comparison
 
 | Factor | Ubuntu Noble | Ubuntu Chiseled | Alpine |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Base C library** | glibc | glibc | musl libc |
 | **Image size** | Large (~220MB) | Small (~105MB) | Small (~115MB) |
 | **Native lib compatibility** | ✅ Excellent | ✅ Excellent | ⚠️ musl issues |
 | **NuGet native deps** | ✅ Full support | ✅ Full support | ⚠️ Hit or miss |
-| **Globalization / ICU** | ✅ Out of box | ✅ via `-extra` tag | ❌ Extra config needed |
+| **Globalization / ICU** | ✅ Out of box | ✅ via `-extra` tag | ❌ Extra config |
 | **Shell access (debug)** | ✅ Yes | ❌ No | ✅ Yes |
 | **Package manager** | ✅ apt | ❌ None | ✅ apk |
 | **Security surface** | Medium | ✅ Minimal | ✅ Minimal |
@@ -131,7 +136,7 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 | **Self-contained publish** | ✅ linux-x64 | ✅ linux-x64 | ⚠️ linux-musl-x64 |
 | **Kubernetes pod startup** | Medium | ✅ Fast | ✅ Fast |
 | **Ubuntu LTS support** | 2029 (Noble) | 2029 (Noble) | N/A |
-| **Best for** | General purpose | Production secure | Simple APIs, no native deps |
+| **Best for** | General purpose | Production secure | Simple APIs |
 
 ---
 
@@ -171,7 +176,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
       --build-arg DOTNET_VERSION=10.0 \
       -t myapp:${{ github.ref_name }} .
     docker push myapp:${{ github.ref_name }}
-```
+```text
 
 ```dockerfile
 ARG DOTNET_VERSION=10.0
@@ -194,7 +199,7 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 
 ## Recommended Approach by Use Case
 
-```
+```text
 General-purpose ASP.NET Core API?
     └── noble-chiseled — best balance of size, security, compatibility
 
@@ -216,3 +221,73 @@ Production, security-hardened, non-root?
 Self-contained single binary?
     └── Alpine with linux-musl-x64 or chiseled with linux-x64
 ```
+
+---
+
+## Getting Started With This Repository
+
+This repository builds and publishes .NET 10 ASP.NET Docker base images
+(Alpine, Ubuntu Noble, and Ubuntu Noble Chiseled) for downstream applications.
+
+### Prerequisites
+
+- Docker Engine with BuildKit support (`docker buildx` available)
+- Git
+- A GitHub account/token only if you plan to push images to GHCR (`ghcr.io`)
+
+### Local Setup
+
+```bash
+git clone <your-repo-url>
+cd Imeritas.DevOps.BaseImages
+```
+
+### Build Commands
+
+```bash
+# Alpine .NET 10 base image
+docker build \
+  -f dockerfiles/alpine/10/dockerfile \
+  -t imeritas/alpine-net-10:local \
+  dockerfiles/alpine/10
+
+# Ubuntu Noble .NET 10 base image
+docker build \
+  -f dockerfiles/ubuntu/10/dockerfile \
+  -t imeritas/ubuntu-net-10:local \
+  dockerfiles/ubuntu/10
+
+# Ubuntu Noble Chiseled .NET 10 base image
+docker build \
+  -f dockerfiles/ubuntu-chiseled/10/dockerfile \
+  -t imeritas/ubuntu-chiseled-net-10:local \
+  dockerfiles/ubuntu-chiseled/10
+```
+
+### Smoke Check
+
+```bash
+docker run --rm imeritas/ubuntu-net-10:local --info
+```
+
+Use the same command with the Alpine and Chiseled tags to verify those images.
+
+### Quick Validation
+
+```bash
+docker build -f dockerfiles/alpine/10/dockerfile dockerfiles/alpine/10
+docker build -f dockerfiles/ubuntu/10/dockerfile dockerfiles/ubuntu/10
+docker build -f dockerfiles/ubuntu-chiseled/10/dockerfile dockerfiles/ubuntu-chiseled/10
+```
+
+### Common Setup Issues
+
+1. **Buildx not available**
+   - Symptom: `docker buildx` commands fail
+   - Fix: install/enable Docker Buildx in your Docker installation
+2. **Permission errors pulling base images**
+   - Symptom: cannot pull `mcr.microsoft.com/dotnet/aspnet:10.0-*`
+   - Fix: verify outbound network access and Docker daemon connectivity
+3. **GHCR push/auth problems**
+   - Symptom: push fails to `ghcr.io`
+   - Fix: authenticate Docker to GHCR and ensure package write permissions
