@@ -1,64 +1,246 @@
 # DevOps Base Images for .NET
 
+This repository is mostly documentation. It explains how to choose Microsoft's official .NET 10 runtime bases (Ubuntu Noble, Ubuntu Chiseled, Alpine) and how this repo's optional Imeritas wrapper images fit on top.
 
-This repository is primarily **documentation**: it explains how to choose Microsoft’s official .NET 10 runtime bases (Ubuntu Noble, Chiseled, Alpine) and how this repo’s optional **Imeritas wrapper images** fit in. Treat it as **ideas and guidelines**—a starting point for **brainstorming** and for picking what **fits best** on future projects—not a fixed rulebook or org-wide mandate. Always align with your team’s standards, risk posture, and registry policies.
-
-Read the sections below first; then use **The Images at a Glance** and the strategy sections for detail.
-
-### For application developers
-
-- **Your main decision:** full Ubuntu (`noble`), Chiseled (`noble-chiseled` / `noble-chiseled-extra`), or Alpine — see **Strategy 1 — Standard Ubuntu (Noble)**, **Strategy 2 — Ubuntu Chiseled**, **Strategy 3 — Alpine Linux**, and [Recommended Approach by Use Case](#recommended-approach-by-use-case) below.
-- **Default bias for production .NET:** prefer **noble-chiseled** (or **noble-chiseled-extra** if you need globalization/ICU without the full image); use **full noble** when you need `apt`, a shell in the image, or heavy native stacks (e.g. some drawing/PDF scenarios).
-- **If you use Alpine:** you own **musl** caveats (native NuGet deps, `linux-musl-x64` for self-contained) — see [The musl vs glibc Problem in Practice](#the-musl-vs-glibc-problem-in-practice) and the comparison table in [Side-by-Side Comparison](#side-by-side-comparison).
-
-### For platform and DevOps
-
-- **Image catalog:** [The Images at a Glance](#the-images-at-a-glance), [Image Size Comparison](#image-size-comparison-approx-net-10-aspnet-runtime), and [Published images (GHCR)](#published-images-ghcr).
-- **CI patterns:** **GitHub Actions — Multi-stage with .NET 10** (section below).
-- **Building this repo’s base images locally:** [Getting Started With This Repository](#getting-started-with-this-repository) (paths under `dockerfiles/`, build commands, smoke check).
-
-### For security and compliance
-
-- **Chiseled** reduces surface area (no shell, no package manager in the runtime image) but complicates break-glass debugging — trade off with operational runbooks; see Chiseled cons under **Strategy 2 — Ubuntu Chiseled** below.
-- **Alpine vs glibc** affects supply chain and compatibility, not just size — [Side-by-Side Comparison](#side-by-side-comparison) and [The musl vs glibc Problem in Practice](#the-musl-vs-glibc-problem-in-practice) summarize common failure modes.
-- **Patching** follows the lifecycles of the **upstream Microsoft** and **distro** images you pin; document your tag/digest policy in your own org — this README does not replace a formal image-allowed list.
+Treat the contents as guidelines, not a mandate. The goal is to give teams a clear starting point for picking a base image and to publish a small set of hardened wrapper images that downstream services can build on. Align everything with your own team's standards, registry policy, and risk posture.
 
 ---
 
-## The Images at a Glance
+## Who should read what
+
+**Application developers.** Your main decision is between full Ubuntu (`noble`), Chiseled (`noble-chiseled` / `noble-chiseled-extra`), and Alpine. The short answer for new .NET 10 ASP.NET services is `noble-chiseled` (or `noble-chiseled-extra` if you need ICU). Use full `noble` when you need `apt`, an in-image shell, or heavier native stacks like SkiaSharp or PDF tooling. If you pick Alpine, you own the musl caveats — see [musl vs glibc in practice](#musl-vs-glibc-in-practice).
+
+**Platform and DevOps.** Catalog of images is in [The images at a glance](#the-images-at-a-glance) and [Image size comparison](#image-size-comparison). Build and CI patterns are below; published images live in [Published images (GHCR)](#published-images-ghcr).
+
+**Security and compliance.** Chiseled reduces surface area (no shell, no package manager in the runtime) at the cost of more involved break-glass debugging. Alpine vs glibc affects supply chain and compatibility, not just size. Patching follows whatever upstream Microsoft and distro lifecycles you pin to. This README does not replace your org's image allow-list or tagging policy.
+
+---
+
+## The images at a glance
 
 ```bash
-# Microsoft's official .NET images — Ubuntu (Noble = 24.04 LTS in .NET 10)
+# Microsoft official .NET 10 — Ubuntu (Noble = 24.04 LTS)
 mcr.microsoft.com/dotnet/aspnet:10.0-noble
-mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled        # minimal Ubuntu
-mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra  # chiseled + extra libs
+mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled        # minimal Ubuntu, distroless-style
+mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra  # chiseled + ICU/tzdata
 
-# Microsoft's official .NET images — Alpine
+# Microsoft official .NET 10 — Alpine
 mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 mcr.microsoft.com/dotnet/aspnet:10.0-alpine3.21
 ```
 
+## Image size comparison
+
+Approximate sizes for the ASP.NET runtime image on .NET 10. Sizes shift with each servicing release; for current numbers see Microsoft's [sample image size report](https://github.com/dotnet/dotnet-docker/blob/main/documentation/sample-image-size-report.md).
+
+| Image                       | Compressed | Uncompressed |
+| --------------------------- | ---------- | ------------ |
+| `10.0-noble` (full Ubuntu)  | ~90 MB     | ~220 MB      |
+| `10.0-noble-chiseled`       | ~40 MB     | ~105 MB      |
+| `10.0-alpine`               | ~45 MB     | ~115 MB      |
+| `10.0-alpine-composite`     | ~38 MB     | ~98 MB       |
+
+Chiseled Ubuntu and Alpine sit within a few megabytes of each other. Size alone is not a strong reason to pick one over the other — the deciding factors are libc, shell access, and package manager availability.
+
 ---
 
-## Image Size Comparison (approx. .NET 10 ASP.NET runtime)
+## Ubuntu Noble (full)
 
-| Image | Compressed | Uncompressed |
-| --- | --- | --- |
-| `10.0-noble` (full Ubuntu) | ~90 MB | ~220 MB |
-| `10.0-noble-chiseled` | ~40 MB | ~105 MB |
-| `10.0-alpine` | ~45 MB | ~115 MB |
-| `10.0-alpine-composite` | ~38 MB | ~98 MB |
+`mcr.microsoft.com/dotnet/*:10.0-noble` is a conventional Linux container: a shell, `apt`, and the usual Ubuntu base packages. That makes it the most flexible option. You can add native libraries at build time, `docker exec` for break-glass debugging, and most teams find it behaves the way they expect from a "normal" Linux box.
 
-> Chiseled Ubuntu and Alpine remain very close in size.
-> Size alone is not a strong differentiator.
+The trade-off is size and attack surface. The full ASP.NET runtime image is noticeably larger than the Chiseled variant for the same .NET version, and it ships more installed packages.
+
+**Strengths**
+
+- glibc — strongest compatibility with NuGet packages that ship native `.so` dependencies.
+- `apt` and shell available in the runtime image when policy allows.
+- ICU-backed globalization out of the box.
+- Behaves like a conventional Ubuntu container, which matches most developer machines.
+- Good fit for SkiaSharp, ImageSharp, OpenSSL-heavy workloads, and any "install another deb" scenario.
+- Ubuntu 24.04 Noble carries standard Canonical LTS support through April 2029.
+
+**Limitations**
+
+- Larger pulls and larger disk footprint than Chiseled. See [Image size comparison](#image-size-comparison).
+- More installed packages means a broader patch surface than the minimal variants.
+- Not distroless — there's more in the image than the runtime strictly needs.
+
+When in doubt between Noble and Chiseled: pick Noble when you need `apt`, a shell, or the widest runtime installability. Pick Chiseled when you can accept giving those up in exchange for a smaller, tighter runtime.
 
 ---
 
-### Multi-stage: Noble SDK vs Imeritas `ubuntu-net-10` runtime
+## Ubuntu Chiseled
 
-Publish with `mcr.microsoft.com/dotnet/sdk:10.0-noble`, then run the published output on `ghcr.io/imeritas-org/ubuntu-net-10` — the image this repository **builds and publishes** from [`dockerfiles/ubuntu/10/dockerfile`](dockerfiles/ubuntu/10/dockerfile) (not a second arbitrary tag). It layers **security-oriented maintenance and hardening** on top of Microsoft’s ASP.NET Noble base: `apt` **update/upgrade**, pinned packages (**curl**, **libicu74**, **tzdata**, **ca-certificates**), production-oriented **environment** (**`ASPNETCORE_URLS`** on 8080/8443, **`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false`**, **server GC** and **`DOTNET_GCHeapHardLimit`**), a dedicated **`imeritas`** account (UID/GID **7777**, home **`/app`**) for non-root-oriented layouts, **`chown`**/`chmod` on **`/app`**, and **`WORKDIR /app`**. That is what you pull from GHCR; see [Published images (GHCR)](#published-images-ghcr).
+Ubuntu Chiseled (`*-noble-chiseled`, `*-noble-chiseled-extra`) is a distroless-style variant built by Canonical in partnership with Microsoft using the Chisel tool. The image contains only the slice of Ubuntu .NET actually needs: no shell, no package manager, non-root by default, and far fewer moving parts than the full Noble image. See the [official overview](https://github.com/dotnet/dotnet-docker/blob/main/documentation/ubuntu-chiseled.md).
 
-**Upstream Microsoft runtime only** — `mcr.microsoft.com/dotnet/aspnet:10.0-noble` is Microsoft’s **stock** ASP.NET image. It does **not** include the Dockerfile steps above: no Imeritas package set, env tuning, heap cap, or `imeritas` user from [`dockerfiles/ubuntu/10/dockerfile`](dockerfiles/ubuntu/10/dockerfile).
+There is no Chiseled SDK image. You publish with `mcr.microsoft.com/dotnet/sdk:*-noble` and run on a Chiseled runtime tag.
+
+**Strengths**
+
+- Smaller compressed and uncompressed size than full Noble for framework-dependent deployments.
+- Minimal package set — only what Chisel slices in.
+- No `apt` and no shell in the runtime image, which removes useful tooling from an attacker as well.
+- `noble-chiseled-extra` adds ICU and timezone data without pulling in the full Noble image.
+- Non-root by default.
+- Same glibc and Ubuntu lineage as Noble, so native libraries behave closer to a developer's full-Ubuntu machine than Alpine does.
+
+**Limitations**
+
+- No shell. `docker exec` into a shell will not work the way it does on full Noble. Plan for sidecars, ephemeral debug pods, or CI-driven diagnostics.
+- No package manager. You cannot `apt install` at runtime; changes mean rebuilding the image (or working with Chisel slice definitions directly).
+- You have to pick the right variant. Use `chiseled-extra` when you need globalization parity closer to the full image; otherwise the defaults differ from stock `aspnet:noble`.
+- Build stage still uses the full Ubuntu SDK image. Only the runtime stage is chiseled.
+
+---
+
+## Alpine Linux
+
+Alpine has been the go-to for very small container images for a long time. It uses `musl` instead of `glibc`, ships a small shell (`sh`) and package manager (`apk`), and produces a runtime image close in size to Chiseled.
+
+The catch is musl. Many NuGet packages with native components either don't support musl, support it partially, or fail in ways that are hard to attribute. Globalization and timezone behavior also need explicit configuration in some scenarios.
+
+**Strengths**
+
+- Small image size — fast pulls, less registry storage, quicker pod starts.
+- Minimal default attack surface.
+- `apk` still available for runtime additions when needed.
+- Shell present, so `docker exec` and basic in-container troubleshooting work.
+- Solid fit for simple REST or gRPC services with no native dependencies.
+- Cost savings at scale on bandwidth and CI throughput.
+
+**Limitations**
+
+- musl libc is the root of most Alpine .NET pain.
+- NuGet packages with native components often don't support musl, or do so only with extra work.
+- SkiaSharp, `libgdiplus`, and similar drawing/PDF stacks need extra packages or fail.
+- ICU and globalization may need explicit configuration.
+- Self-contained publishes need `--runtime linux-musl-x64`, which is easy to forget.
+- Some `PInvoke` and interop scenarios behave differently under musl.
+- Less alignment with the typical developer machine, so "works locally, fails in Alpine" is a known pattern.
+- Microsoft supports Alpine, but recommends Chiseled for most hardened production .NET deployments.
+
+---
+
+## Side-by-side comparison
+
+| Factor                       | Ubuntu Noble  | Ubuntu Chiseled  | Alpine               |
+| ---------------------------- | ------------- | ---------------- | -------------------- |
+| Base C library               | glibc         | glibc            | musl                 |
+| ASP.NET runtime image size   | ~220 MB       | ~105 MB          | ~115 MB              |
+| Native library compatibility | Excellent     | Excellent        | Mixed (musl)         |
+| NuGet native dependencies    | Full support  | Full support     | Hit or miss          |
+| Globalization / ICU          | Out of box    | Via `-extra` tag | Extra config needed  |
+| Shell access for debugging   | Yes           | No               | Yes                  |
+| Package manager              | `apt`         | None             | `apk`                |
+| Typical scanner CVE noise    | Higher        | Very low         | Very low             |
+| Non-root by default          | No            | Yes              | No                   |
+| Microsoft recommendation     | Yes           | Yes (preferred)  | Yes, with caveats    |
+| SkiaSharp / System.Drawing   | Works         | Works            | Needs extra libs     |
+| Self-contained publish       | `linux-x64`   | `linux-x64`      | `linux-musl-x64`     |
+| Kubernetes pod startup       | Medium        | Fast             | Fast                 |
+| Distro LTS window            | 2029 (Noble)  | 2029 (Noble)     | Rolling, no LTS      |
+| Best fit                     | General use   | Hardened prod    | Small, simple APIs   |
+
+CVE counts on fresh builds are roughly comparable between Chiseled and Alpine because both ship a minimal package set. Full Noble carries more components, so scanners typically flag more findings — most of them in OS utilities the app does not actually use.
+
+---
+
+## musl vs glibc in practice
+
+The Alpine failures developers hit most often look like this:
+
+```text
+# Native lib not found
+System.DllNotFoundException: Unable to load shared library 'libgdiplus'
+
+# Globalization mode wrong for the workload
+System.Globalization.CultureNotFoundException:
+Only the invariant culture is supported in globalization-invariant mode.
+```
+
+Common fixes:
+
+```dockerfile
+# Fix 1 — install missing libs in the Alpine Dockerfile
+RUN apk add --no-cache \
+    icu-libs \
+    libgdiplus \
+    krb5-libs \
+    libintl \
+    libssl3
+
+# Fix 2 — opt into invariant globalization (you lose culture support)
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+# Fix 3 — switch to chiseled-extra, which includes ICU and tzdata
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
+```
+
+Fix 3 is the path of least resistance in most enterprise environments.
+
+---
+
+## Choosing a base image
+
+```text
+General-purpose ASP.NET Core API
+  -> noble-chiseled — best balance of size, security, and compatibility
+
+Needs SkiaSharp, ImageSharp, System.Drawing, or PDF libraries
+  -> noble (full) or noble-chiseled-extra — Alpine will cause pain
+
+Needs globalization or timezone data but wants a small image
+  -> noble-chiseled-extra — ICU + tzdata included
+
+Simple gRPC or REST service with no native dependencies
+  -> Alpine is fine — small, fast, well-understood
+
+Need to `docker exec` in for routine debugging
+  -> noble (full) or Alpine — chiseled has no shell
+
+Production, security-hardened, non-root by default
+  -> noble-chiseled — Microsoft's recommended hardened production image
+
+Self-contained single-binary publish
+  -> Alpine with linux-musl-x64, or chiseled with linux-x64
+```
+
+Rough rule of thumb across teams:
+
+- Internal tools and prototypes where convenience and quick troubleshooting matter most: **full Noble**.
+- Microservices with no native dependencies and a real interest in tiny images: **Alpine**.
+- Anything deployed at scale into an environment with strict compliance or zero-CVE expectations: **Chiseled** (with `-extra` if you need ICU).
+
+---
+
+## Imeritas wrapper images
+
+This repository builds three .NET 10 wrapper images on top of the Microsoft bases. They share the same operational contract: ports 8080/8443 exposed, ICU-backed globalization, server GC with a managed heap cap, a non-root `imeritas` user (UID/GID `7777`) with home `/app`, and `/app/.info` plus `/app/app-data` directories ready for the runtime user.
+
+| Image                                       | Source Dockerfile                                                     | Based on                                              |
+| ------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------- |
+| `ghcr.io/imeritas-org/ubuntu-net-10`        | [`dockerfiles/ubuntu/10/dockerfile`](dockerfiles/ubuntu/10/dockerfile)                       | `mcr.microsoft.com/dotnet/aspnet:10.0-noble`          |
+| `ghcr.io/imeritas-org/ubuntu-chiseled-net-10` | [`dockerfiles/ubuntu-chiseled/10/dockerfile`](dockerfiles/ubuntu-chiseled/10/dockerfile)   | `mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled` |
+| `ghcr.io/imeritas-org/alpine-net-10`        | [`dockerfiles/alpine/10/dockerfile`](dockerfiles/alpine/10/dockerfile)                       | `mcr.microsoft.com/dotnet/aspnet:10.0-alpine`         |
+
+What each wrapper adds on top of the upstream Microsoft image:
+
+- **Package update and curated install set.** Ubuntu uses `apt update && apt upgrade` plus `curl`, `libicu74`, `tzdata`, `ca-certificates`, `adduser`. Alpine uses `apk update && apk upgrade` plus `ca-certificates`, `curl`, `icu`, `icu-libs`, `tzdata`. The Chiseled image uses Canonical Chisel to slice in `curl_bins`, `libicu74_libs`, `tzdata_zoneinfo` (and the legacy zoneinfo slice) without dragging in a package manager.
+- **Production ASP.NET environment.** `ASPNETCORE_ENVIRONMENT=Production`, `ASPNETCORE_URLS=http://+:8080`, `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false`, `DOTNET_gcServer=1`, `DOTNET_GCHeapHardLimit=3221225472` (~3 GiB).
+- **Exposed ports.** `8080` (HTTP) and `8443` (HTTPS). Kestrel binds 8080 by default; 8443 is exposed for downstream images that wire up HTTPS.
+- **Non-root user.** `imeritas` (UID/GID `7777`) with home `/app`, `WORKDIR /app`, and ownership/permissions set so the runtime user can read and execute under `/app`. The Chiseled variant also sets `APP_UID=7777` so the standard ASP.NET Core container conventions resolve to the same user.
+- **Runtime metadata snapshots.** `/app/.info/dotnet.txt` (`dotnet --info`) and `/app/.info/linux.txt` (`/etc/os-release`) captured at build time.
+- **Writable app state directory.** `/app/app-data`, owned by `imeritas`, ready for application data.
+
+Upstream `mcr.microsoft.com/dotnet/aspnet:10.0-noble` and friends are Microsoft's stock images. They do not include any of the above. If you build directly on the stock images, your CI cannot surface regressions tied to the wrapper layers — those layers aren't there.
+
+---
+
+## Multi-stage: stock SDK + Imeritas runtime
+
+Publish with `mcr.microsoft.com/dotnet/sdk:10.0-noble`, then run the published output on `ghcr.io/imeritas-org/ubuntu-net-10` so local builds and CI pick up the same updated packages, environment, GC and heap settings, listening ports, ICU data, and `/app` layout that production runs.
+
+Stock Microsoft runtime, for comparison:
 
 ```dockerfile
 FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
@@ -72,185 +254,69 @@ COPY --from=build /app .
 ENTRYPOINT ["dotnet", "MyApp.dll"]
 ```
 
-**Imeritas-built runtime (`ubuntu-net-10`)** — final stage only (reuse the same `build` stage). **`FROM ghcr.io/imeritas-org/ubuntu-net-10`** matches the **published artifact** of [`dockerfiles/ubuntu/10/dockerfile`](dockerfiles/ubuntu/10/dockerfile), so local and CI runs use the **same** updated packages, env, GC/memory ceiling, listening ports, ICU, and `/app` layout as production. The stock **`aspnet:10.0-noble`** snippet above cannot surface regressions tied to those layers because **they are not present** in the upstream image.
+Imeritas-built runtime — reuse the same `build` stage and swap only the final image:
 
 ```dockerfile
-# Runtime image = build output of dockerfiles/ubuntu/10/dockerfile (see README prose above).
 FROM ghcr.io/imeritas-org/ubuntu-net-10 AS runtime
 WORKDIR /app
-COPY --from=build /app .
+COPY --chown=7777:7777 --from=build /app .
 ENTRYPOINT ["dotnet", "MyApp.dll"]
 ```
 
-## Strategy 1 — Standard Ubuntu (Noble)
-
-Microsoft’s **full** Ubuntu 24.04 **Noble** images (`mcr.microsoft.com/dotnet/*:10.0-noble`) are a **normal Linux container**: a **shell**, **`apt`**, and a broad set of packages on the base image. You get **maximum flexibility** for adding native libraries, using `docker exec` for break-glass debugging, and matching many developers’ “full Linux” expectations. The tradeoff is **size and attack surface** — the stock ASP.NET runtime image is much **larger** than the Chiseled variant for the same .NET version (see Microsoft’s [sample image size report](https://github.com/dotnet/dotnet-docker/blob/main/documentation/sample-image-size-report.md) for relative numbers; sizes move with releases).
-
-**vs Chiseled (summary):** Standard Noble is the choice when you need **apt + shell +** the widest **runtime installability**; Chiseled is the choice when you accept **no apt/shell** in the runtime image in exchange for a **smaller, slimmer** footprint ([Strategy 2 — Ubuntu Chiseled](#strategy-2-ubuntu-chiseled)).
-
-### ✅ Pros
-
-- **glibc** — same C library as most Linux desktops and servers; strongest compatibility for NuGet packages with native `.so` dependencies
-- **`apt` + shell** — install or troubleshoot packages (`libgdiplus`, `icu-libs`, debugging tools) in the image when policy allows
-- **Default globalization** — typical `aspnet` runtime images include ICU-backed culture support without extra variants
-- **Operational familiarity** — behaves like a conventional Ubuntu container for teams used to full distros
-- Strong fit for **SkiaSharp**, **ImageSharp**, OpenSSL-heavy workloads, and “install another deb” scenarios
-- **Ubuntu 24.04 Noble LTS** — long-term Canonical support until 2029
-
-### ❌ Cons
-
-- **Larger pull and disk use** than Chiseled (and often larger than Alpine) for the same app — see [Image Size Comparison](#image-size-comparison-approx-net-10-aspnet-runtime)
-- **More installed packages** than Chiseled → broader patch surface (still bounded by what Microsoft ships in the image)
-- **Not “distroless”** — more tooling in the image than minimal/runtime-only layouts
+Swap `ubuntu-net-10` for `ubuntu-chiseled-net-10` or `alpine-net-10` to pick a different base. The contract on `/app`, the listening port, and the runtime user stays the same across all three.
 
 ---
 
-## Strategy 2 — Ubuntu Chiseled
-
-**.NET’s Ubuntu Chiseled** images (`*-noble-chiseled`, `*-noble-chiseled-extra`) are **distroless-style**: only the **minimal slice** of Ubuntu required to run .NET, produced with Canonical **Chisel**. Microsoft documents **no package manager**, **no shell**, **non-root by default**, and **far fewer moving parts** than full Noble — which shrinks images and the attack surface compared to standard Ubuntu bases ([official overview](https://github.com/dotnet/dotnet-docker/blob/main/documentation/ubuntu-chiseled.md)). There is **no Chiseled SDK**; you **publish** with `mcr.microsoft.com/dotnet/sdk:*-noble` and run on Chiseled **runtime** tags.
-
-**Main differences from standard Noble:** **smaller** runtime image; **no `apt`/`bash`** in the final stage; **tighter** supply chain; use **`10.0-noble-chiseled-extra`** when you need **ICU + tzdata**-style globalization without switching to the full Ubuntu image (baseline Chiseled ASP.NET tags are **distroless +** different globalization defaults than full Noble — see Microsoft’s variant table in the [sample image size report](https://github.com/dotnet/dotnet-docker/blob/main/documentation/sample-image-size-report.md)).
-
-### ✅ Pros
-
-- **Smaller compressed/uncompressed size** than full Noble for framework-dependent deployments (same report as above)
-- **Minimal packages** — only what Chisel includes for that tag
-- **No `apt` / no shell** in the runtime image — fewer tools for attackers; aligns with hardened production posture
-- **`noble-chiseled-extra`** — ICU/timezone-oriented extras **without** the full Noble image
-- **Non-root by default** on these container variants (per Microsoft’s Chiseled documentation)
-- **Same glibc / Ubuntu lineage** as Noble — native library behavior matches full Ubuntu better than Alpine **musl**
-
-### ❌ Cons
-
-- **No shell** — `docker exec` into a shell **won’t work** like on full Noble; plan **sidecars**, **ephemeral debug pods**, or CI-driven diagnostics
-- **No package manager** — you **cannot** `apt install` at runtime; changes require a **new image** (or advanced Chisel/slice workflows for .NET 10+ per upstream docs)
-- **Variant choice** — pick **`chiseled-extra`** explicitly when you need globalization parity closer to full images; otherwise behavior differs from stock `aspnet:noble`
-- **Build stage** still uses a **full Ubuntu SDK** image — only the **runtime** stage is Chiseled
-
----
-
-## Strategy 3 — Alpine Linux
-
-### ✅ Pros
-
-- Small image size — fast pulls, less registry storage
-- Minimal attack surface — fewer installed packages by default
-- `apk` package manager still available (unlike chiseled)
-- Shell present — `docker exec` debugging works
-- Works well for simple REST APIs / gRPC services with no native deps
-- Cost savings at scale — less bandwidth, faster CI pipelines
-- Good for Kubernetes where pod startup speed matters
-
-### ❌ Cons
-
-- Uses **musl libc** instead of glibc — root cause of most Alpine .NET pain
-- Many NuGet packages with native components **don't support musl**
-- `SkiaSharp`, `libgdiplus` require extra work or fail silently
-- ICU / globalization issues — must explicitly configure
-- `--runtime linux-musl-x64` required for self-contained — easy to miss
-- Some `PInvoke` / interop scenarios break under musl
-- Less alignment with dev machines — "works locally, fails in Alpine"
-- Microsoft does **not** recommend Alpine for production .NET in most scenarios
-
----
-
-## Side-by-Side Comparison
-
-| Factor | Ubuntu Noble | Ubuntu Chiseled | Alpine |
-| --- | --- | --- | --- |
-| **Base C library** | glibc | glibc | musl libc |
-| **Image size** | Large (~220MB) | Small (~105MB) | Small (~115MB) |
-| **Native lib compatibility** | ✅ Excellent | ✅ Excellent | ⚠️ musl issues |
-| **NuGet native deps** | ✅ Full support | ✅ Full support | ⚠️ Hit or miss |
-| **Globalization / ICU** | ✅ Out of box | ✅ via `-extra` tag | ❌ Extra config |
-| **Shell access (debug)** | ✅ Yes | ❌ No | ✅ Yes |
-| **Package manager** | ✅ apt | ❌ None | ✅ apk |
-| **Security surface** | Medium | ✅ Minimal | ✅ Minimal |
-| **Non-root by default** | ❌ | ✅ | ❌ |
-| **Microsoft recommended** | ✅ Yes | ✅ Yes | ⚠️ Conditional |
-| **SkiaSharp / Drawing** | ✅ | ✅ | ❌ Needs extra libs |
-| **Self-contained publish** | ✅ linux-x64 | ✅ linux-x64 | ⚠️ linux-musl-x64 |
-| **Kubernetes pod startup** | Medium | ✅ Fast | ✅ Fast |
-| **Ubuntu LTS support** | 2029 (Noble) | 2029 (Noble) | N/A |
-| **Best for** | General purpose | Production secure | Simple APIs |
-
----
-
-## The musl vs glibc Problem in Practice
-
-```bash
-# Common Alpine runtime failure — native lib not found
-System.DllNotFoundException: Unable to load shared library 'libgdiplus'
-
-# Common Alpine globalization failure
-Unhandled exception: System.Globalization.CultureNotFoundException:
-Only the invariant culture is supported in globalization-invariant mode.
-
-# Fix 1 — install missing libs in Alpine Dockerfile
-RUN apk add --no-cache \
-    icu-libs \
-    libgdiplus \
-    krb5-libs \
-    libintl \
-    libssl3
-
-# Fix 2 — invariant globalization mode (loss of culture support)
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-
-# Fix 3 — use noble-chiseled-extra instead (globalization included)
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
-```
-
----
-
-## Recommended Approach by Use Case
-
-```text
-General-purpose ASP.NET Core API?
-    └── noble-chiseled — best balance of size, security, compatibility
-
-Needs SkiaSharp, ImageSharp, System.Drawing, PDF libs?
-    └── noble (full) or noble-chiseled-extra — Alpine will cause pain
-
-Needs globalization / timezone but wants small image?
-    └── noble-chiseled-extra — ICU + tzdata included
-
-Simple gRPC / REST service, no native deps?
-    └── Alpine is fine — small, fast, works well
-
-Need to docker exec in for debugging?
-    └── noble (full) or Alpine — chiseled has no shell
-
-Production, security-hardened, non-root?
-    └── noble-chiseled — Microsoft's recommended production image
-
-Self-contained single binary?
-    └── Alpine with linux-musl-x64 or chiseled with linux-x64
-```
-
----
-
-## Getting Started With This Repository
-
-This repository builds and publishes .NET 10 ASP.NET Docker base images
-(Alpine, Ubuntu Noble, and Ubuntu Noble Chiseled) for downstream applications.
+## Getting started
 
 ### Prerequisites
 
-- Docker Engine with BuildKit support (`docker buildx` available)
-- Git
-- A GitHub account/token only if you plan to push images to GHCR (`ghcr.io`)
+- Docker Engine with BuildKit (`docker buildx` available).
+- Git.
+- A GitHub account or token only if you plan to push to GHCR (`ghcr.io`).
 
-### Local Setup
+### Clone
 
 ```bash
 git clone <your-repo-url>
 cd Imeritas.DevOps.BaseImages
 ```
 
-### Published images (GHCR)
+### Local build
 
-Workflows push to **GitHub Container Registry** at `ghcr.io/<lowercase-org>/<image-name>`. The org segment is the GitHub **owner** of this repository (not the repo name). For the `imeritas-org` org, images are:
+Local tags below are for development only. Published image names are the `ghcr.io/imeritas-org/...` paths.
+
+```bash
+# Alpine .NET 10
+docker build -f dockerfiles/alpine/10/dockerfile \
+  -t imeritas/alpine-net-10:local dockerfiles/alpine/10
+
+# Ubuntu Noble .NET 10
+docker build -f dockerfiles/ubuntu/10/dockerfile \
+  -t imeritas/ubuntu-net-10:local dockerfiles/ubuntu/10
+
+# Ubuntu Noble Chiseled .NET 10
+docker build -f dockerfiles/ubuntu-chiseled/10/dockerfile \
+  -t imeritas/ubuntu-chiseled-net-10:local dockerfiles/ubuntu-chiseled/10
+```
+
+### Smoke check
+
+Each image's entrypoint is `dotnet`, so passing `--info` runs `dotnet --info`:
+
+```bash
+docker run --rm imeritas/ubuntu-net-10:local --info
+docker run --rm imeritas/alpine-net-10:local --info
+docker run --rm imeritas/ubuntu-chiseled-net-10:local --info
+```
+
+You should see the runtime version, host OS info, and available SDKs/runtimes for that image.
+
+---
+
+## Published images (GHCR)
+
+The CI workflows in `.github/workflows/docker-*.yml` push to GitHub Container Registry at `ghcr.io/<lowercase-owner>/<image-name>`. The owner segment is the GitHub owner of this repository (not the repo name). For `imeritas-org`:
 
 ```bash
 docker pull ghcr.io/imeritas-org/alpine-net-10
@@ -258,47 +324,20 @@ docker pull ghcr.io/imeritas-org/ubuntu-net-10
 docker pull ghcr.io/imeritas-org/ubuntu-chiseled-net-10
 ```
 
-The same commands work from **PowerShell**, Command Prompt, and bash. Each image is tagged `latest` and with a UTC publish stamp `yyyyMMdd-HHmm` (see `.github/workflows/docker-*.yml`). Use `:latest`, a specific stamp tag, or a digest pin for reproducible builds. Public packages can be pulled without logging in; private packages require `docker login ghcr.io`.
+The same commands work from PowerShell, Command Prompt, and bash. Each image is tagged `latest` and with a UTC publish stamp `yyyyMMdd-HHmm`. For reproducible builds, pin to a specific stamp tag or a digest rather than `latest`. Public packages pull without authentication; private packages need `docker login ghcr.io`.
 
-### Local Build Commands
+Published images are signed with [cosign](https://github.com/sigstore/cosign) via the keyless workflow. The signing step runs against the build digest, so signatures are tied to the exact image content, not the tag.
 
-Local tags below are for development only; published names are the `ghcr.io/imeritas-org/...` paths above.
+---
 
-```bash
-# Alpine .NET 10 base image
-docker build -f dockerfiles/alpine/10/dockerfile -t imeritas/alpine-net-10:local dockerfiles/alpine/10
+## Troubleshooting
 
-# Ubuntu Noble .NET 10 base image
-docker build -f dockerfiles/ubuntu/10/dockerfile -t imeritas/ubuntu-net-10:local dockerfiles/ubuntu/10
+**`docker buildx` not available.** Install or enable Docker Buildx in your Docker installation. Older Docker installs may need an explicit `docker buildx install` or a newer Docker Desktop.
 
-# Ubuntu Noble Chiseled .NET 10 base image
-docker build -f dockerfiles/ubuntu-chiseled/10/dockerfile -t imeritas/ubuntu-chiseled-net-10:local dockerfiles/ubuntu-chiseled/10
-```
+**Cannot pull `mcr.microsoft.com/dotnet/aspnet:10.0-*`.** Check outbound network access to `mcr.microsoft.com` and that the Docker daemon is running. Corporate proxies sometimes need to be added to the Docker engine config.
 
-### Smoke Check
+**GHCR push or auth errors.** Authenticate Docker to GHCR (`docker login ghcr.io`) and confirm the token has `write:packages`. The workflow uses `GITHUB_TOKEN` with `packages: write`, which requires the package to allow the repo as a source.
 
-```bash
-docker run --rm imeritas/ubuntu-net-10:local --info
-```
+**Chiseled image won't open a shell.** That's expected — there is no shell. For debugging, copy a busybox or debug sidecar image into the same pod, or rebuild against the full Noble image temporarily.
 
-Use the same command with the Alpine and Chiseled tags to verify those images.
-
-### Quick Validation
-
-```bash
-docker build -f dockerfiles/alpine/10/dockerfile dockerfiles/alpine/10
-docker build -f dockerfiles/ubuntu/10/dockerfile dockerfiles/ubuntu/10
-docker build -f dockerfiles/ubuntu-chiseled/10/dockerfile dockerfiles/ubuntu-chiseled/10
-```
-
-### Common Setup Issues
-
-1. **Buildx not available**
-   - Symptom: `docker buildx` commands fail
-   - Fix: install/enable Docker Buildx in your Docker installation
-2. **Permission errors pulling base images**
-   - Symptom: cannot pull `mcr.microsoft.com/dotnet/aspnet:10.0-*`
-   - Fix: verify outbound network access and Docker daemon connectivity
-3. **GHCR push/auth problems**
-   - Symptom: push fails to `ghcr.io`
-   - Fix: authenticate Docker to GHCR and ensure package write permissions
+**Alpine app throws `DllNotFoundException`.** The library is almost always missing a musl-compatible native dep. Either add the appropriate `apk` packages, or switch the base to `noble-chiseled-extra` and run on glibc.
